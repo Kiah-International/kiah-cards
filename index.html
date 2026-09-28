@@ -1,0 +1,81 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kiah Digital Business Card</title>
+<style>
+:root{--bg:#fdf3f2;--card:#fff;--tx:#2b2b2b;--mut:#777;--pri:#f26361;--blue:#b9d4e6;--bd:#f0d9d8}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,sans-serif}
+.wrap{max-width:480px;margin:0 auto;padding:16px}.banner{width:100%;border-radius:16px 16px 0 0;display:block}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:0 0 16px 16px;padding:20px}
+h1{margin:0;font-size:22px}h2{font-size:16px;margin:20px 0 8px}.role{color:var(--pri);font-weight:600;margin:2px 0 14px}
+.row{padding:11px 0;border-top:1px solid var(--bd);word-break:break-all}.row a{color:inherit;text-decoration:none}.lbl{font-size:11px;color:var(--mut);display:block}
+button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer;margin:8px 8px 0 0}
+button.alt{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+input,select{width:100%;padding:10px;margin:4px 0 12px;border:1px solid var(--bd);border-radius:10px;font:inherit;background:var(--bg);color:var(--tx)}
+label{font-size:12px;color:var(--mut)}.tag{background:var(--blue);color:#23415a;border-radius:20px;padding:2px 10px;font-size:12px;margin-left:6px}
+.qr{text-align:center;margin-top:14px}.qr svg{width:170px;height:170px;background:#fff;padding:8px;border-radius:12px}
+.m{padding:10px 0;border-top:1px solid var(--bd);font-size:14px}.m small{color:var(--mut);display:block}.note{font-size:12px;color:var(--mut)}
+</style></head><body><div class="wrap"><img class="banner" src="banner.png" alt="Kiah"><div class="card" id="app">Loading…</div></div>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),app=$('app');
+const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let sb,me=null,team=[],signup=false,tab='card';
+const link=s=>location.origin+location.pathname+'?c='+s;
+function qr(t){try{const q=qrcode(0,'M');q.addData(t);q.make();return q.createSvgTag({cellSize:4,margin:0,scalable:true});}catch(e){return'';}}
+function vcard(c){return['BEGIN:VCARD','VERSION:3.0','FN:'+c.name,'ORG:Kiah International','TITLE:'+(c.designation||''),'TEL;TYPE=WORK:'+(c.phone||''),'EMAIL;TYPE=WORK:'+(c.email||''),'END:VCARD'].join('\r\n');}
+function saveVcf(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([vcard(me)],{type:'text/vcard'}));a.download='kiah-contact.vcf';a.click();}
+function show(c){return`<h1>${esc(c.name)}</h1><div class="role">${esc(c.designation)}${c.type?`<span class="tag">${esc(c.type)}</span>`:''}</div>
+<div class="row"><a href="mailto:${esc(c.email)}"><span class="lbl">Work email</span>${esc(c.email)}</a></div>
+<div class="row"><a href="tel:${esc(c.phone)}"><span class="lbl">Phone</span>${esc(c.phone)}</a></div>`;}
+async function init(){
+  if(!window.CFG){app.textContent='Setup not finished: config.js is missing.';return;}
+  sb=supabase.createClient(CFG.url,CFG.key);
+  const c=new URLSearchParams(location.search).get('c');
+  if(c){const{data}=await sb.rpc('public_card',{s:c});app.innerHTML=data&&data[0]?show(data[0])+`<button onclick="location.href=location.pathname">Open Kiah cards</button>`:'Card not found.';return;}
+  sb.auth.onAuthStateChange((_e,s)=>{if(!s)loginView();});
+  const{data:{session}}=await sb.auth.getSession();
+  session?load():loginView();
+}
+function loginView(){app.innerHTML=`<h1>${signup?'Create login':'Log in'}</h1><p class="note">Use your Kiah work email. Only people added by the admin can get in.</p>
+<label>Email</label><input id="em" type="email"><label>Password (min 6 characters)</label><input id="pw" type="password">
+<button onclick="auth()">${signup?'Create login':'Log in'}</button><button class="alt" onclick="signup=!signup;loginView()">${signup?'I already have a login':'First time? Create login'}</button><p class="note" id="msg"></p>`;}
+async function auth(){
+  const a={email:$('em').value.trim(),password:$('pw').value};
+  const{error}=signup?await sb.auth.signUp(a):await sb.auth.signInWithPassword(a);
+  if(error){$('msg').textContent=error.message;return;}load();
+}
+async function load(){
+  await sb.rpc('claim');
+  const{data:{user}}=await sb.auth.getUser();
+  const{data}=await sb.from('team').select('*').eq('user_id',user.id).maybeSingle();
+  me=data;
+  if(!me){app.innerHTML=`<p>Your email (${esc(user.email)}) is not on the team list yet. Please ask your admin to add you.</p><button class="alt" onclick="sb.auth.signOut()">Log out</button>`;return;}
+  if(me.is_admin)await loadTeam();
+  render();
+}
+async function loadTeam(){const{data}=await sb.from('team').select('*').order('name');team=data||[];}
+function render(){
+  let h=me.is_admin?`<div><button class="${tab==='card'?'':'alt'}" onclick="tab='card';render()">My card</button><button class="${tab==='team'?'':'alt'}" onclick="tab='team';render()">Team (${team.length})</button></div>`:'';
+  if(tab==='team'&&me.is_admin){
+    h+=`<h2>Add a person</h2><label>Work email</label><input id="ne"><label>Name</label><input id="nn"><label>Designation</label><input id="nd">
+    <label>Type</label><select id="nt"><option>Full-time</option><option>Part-time</option><option>Casual</option></select><button onclick="addP()">Add</button><h2>Everyone</h2>`+
+    team.map(t=>`<div class="m"><b>${esc(t.name||'(not filled yet)')}</b>${t.is_admin?'<span class="tag">Admin</span>':''}<small>${esc(t.designation)} · ${esc(t.type)} · ${esc(t.email)}</small>
+    <button class="alt" onclick="tog('${esc(t.email)}',${!t.is_admin})">${t.is_admin?'Remove admin':'Make admin'}</button><button class="alt" onclick="del('${esc(t.email)}')">Delete</button></div>`).join('');
+  }else if(tab==='edit'){
+    h+=`<h1>Edit your card</h1><label>Full name</label><input id="n" value="${esc(me.name)}"><label>Designation</label><input id="d" value="${esc(me.designation)}">
+    <label>Phone</label><input id="p" type="tel" value="${esc(me.phone)}"><label>Employment type</label><select id="t">${['Full-time','Part-time','Casual'].map(o=>`<option ${me.type===o?'selected':''}>${o}</option>`).join('')}</select>
+    <button onclick="save()">Save</button><button class="alt" onclick="tab='card';render()">Cancel</button>`;
+  }else{
+    h+=show(me)+`<button onclick="tab='edit';render()" class="alt">Edit</button><button onclick="saveVcf()">Save to contacts</button>
+    <button class="alt" onclick="navigator.clipboard.writeText('${link(me.slug)}');this.textContent='Link copied'">Copy my card link</button>
+    <div class="qr">${qr(link(me.slug))}<div class="note">Scan to open this card</div></div><button class="alt" onclick="sb.auth.signOut()">Log out</button>`;
+  }
+  app.innerHTML=h;
+}
+async function save(){const{error}=await sb.rpc('save_card',{n:$('n').value.trim(),d:$('d').value.trim(),p:$('p').value.trim(),t:$('t').value});if(error)return alert(error.message);tab='card';load();}
+async function addP(){const e=$('ne').value.trim().toLowerCase();if(!e)return;const{error}=await sb.from('team').insert({email:e,name:$('nn').value.trim(),designation:$('nd').value.trim(),type:$('nt').value});if(error)return alert(error.message);await loadTeam();render();}
+async function tog(e,v){await sb.from('team').update({is_admin:v}).eq('email',e);await loadTeam();render();}
+async function del(e){if(!confirm('Delete '+e+'?'))return;await sb.from('team').delete().eq('email',e);await loadTeam();render();}
+init();
+</script></body></html>
